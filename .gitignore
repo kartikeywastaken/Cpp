@@ -1,0 +1,7 @@
+# Build artifacts
+build/
+bin/
+*.o
+
+# OS files
+.DS_Store

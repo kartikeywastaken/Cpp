@@ -660,7 +660,7 @@ ExprPtr Parser::parseCast() {
         advance(); // consume '('
         TypePtr targetType = parseTypeName();
         consume(TokenKind::RParen, "expected ')' in cast");
-        ExprPtr operand = parseCast();
+        ExprPtr operand = parseUnary();
         return std::make_shared<CastExpr>(loc, targetType, operand);
     }
 

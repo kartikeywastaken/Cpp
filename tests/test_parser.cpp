@@ -131,6 +131,27 @@ void testParserDoWhileAndTernary() {
     std::cout << "  [PASS] testParserDoWhileAndTernary\n";
 }
 
+void testParserCastUnary() {
+    DiagnosticEngine diag;
+    std::string src = "int main() {\n"
+                      "    int x = 10;\n"
+                      "    int* p = &x;\n"
+                      "    int neg = (int)-x;\n"
+                      "    char* cp = (char*)&x;\n"
+                      "    int d = (int)*p;\n"
+                      "    int notx = (int)!x;\n"
+                      "    int bitnot = (int)~x;\n"
+                      "    int chain = (int)(char)x;\n"
+                      "}";
+    Lexer lexer(src, "test.c", diag);
+    Parser parser(lexer, diag);
+    auto program = parser.parseProgram();
+
+    assert(!diag.hasErrors());
+    assert(program->getDeclarations().size() == 1);
+    std::cout << "  [PASS] testParserCastUnary\n";
+}
+
 void runParserTests() {
     std::cout << "[RUNNING] Parser Unit Tests...\n";
     testParserPrecedence();
@@ -139,4 +160,5 @@ void runParserTests() {
     testParserControlFlow();
     testParserMultipleDeclarators();
     testParserDoWhileAndTernary();
+    testParserCastUnary();
 }

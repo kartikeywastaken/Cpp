@@ -3,6 +3,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <unistd.h>
+
 #include "Diagnostic.h"
 #include "Lexer.h"
 #include "Parser.h"
@@ -10,14 +13,21 @@
 #include "IRGenerator.h"
 #include "IRPrinter.h"
 #include "IRInterpreter.h"
+#include "CodeGen.h"
 
 void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options] <source_file>\n\n"
-              << "Options:\n"
-              << "  --help, -h       Display this help message\n"
-              << "  --lex            Tokenize input and print tokens\n"
-              << "  --ast            Parse input and print AST\n"
-              << "  --check          Run semantic analysis only\n"
+              << "Compilation Options:\n"
+              << "  -o <file>        Place output into <file> (executable, object, or assembly)\n"
+              << "  -S               Compile only; emit native assembly (.s)\n"
+              << "  -c               Compile and assemble; produce object file (.o)\n"
+              << "  --target <arch>  Target architecture: 'arm64' or 'x86_64' (default: host)\n"
+              << "  --os <system>    Target operating system: 'macos' or 'linux' (default: host)\n"
+              << "  --help, -h       Display this help message\n\n"
+              << "Pipeline Inspection Options:\n"
+              << "  --lex            Tokenize input and print tokens with coordinates\n"
+              << "  --ast            Parse input and print Abstract Syntax Tree (AST)\n"
+              << "  --check          Run semantic analysis and type checking only\n"
               << "  --ir             Generate and print Intermediate Representation (IR)\n"
               << "  --run            Generate IR and execute using built-in IR interpreter\n";
 }
@@ -29,11 +39,17 @@ int main(int argc, char* argv[]) {
     }
 
     std::string filename;
+    std::string outputFile;
+    TargetArch targetArch = getHostTargetArch();
+    TargetOS targetOS = getHostTargetOS();
+
     bool modeLex = false;
     bool modeAst = false;
     bool modeCheck = false;
     bool modeIR = false;
     bool modeRun = false;
+    bool modeAsm = false; // -S
+    bool modeObj = false; // -c
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -50,6 +66,49 @@ int main(int argc, char* argv[]) {
             modeIR = true;
         } else if (arg == "--run") {
             modeRun = true;
+        } else if (arg == "-S") {
+            modeAsm = true;
+        } else if (arg == "-c") {
+            modeObj = true;
+        } else if (arg == "-o") {
+            if (i + 1 < argc) {
+                outputFile = argv[++i];
+            } else {
+                std::cerr << "Error: -o requires an argument\n";
+                return 1;
+            }
+        } else if (arg.rfind("-o", 0) == 0 && arg.size() > 2) {
+            outputFile = arg.substr(2);
+        } else if (arg == "--target") {
+            if (i + 1 < argc) {
+                std::string t = argv[++i];
+                if (t == "arm64" || t == "aarch64") {
+                    targetArch = TargetArch::ARM64;
+                } else if (t == "x86_64" || t == "x86-64" || t == "amd64") {
+                    targetArch = TargetArch::X86_64;
+                } else {
+                    std::cerr << "Error: unsupported target architecture: " << t << "\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --target requires an argument\n";
+                return 1;
+            }
+        } else if (arg == "--os") {
+            if (i + 1 < argc) {
+                std::string osName = argv[++i];
+                if (osName == "macos" || osName == "darwin" || osName == "apple") {
+                    targetOS = TargetOS::macOS;
+                } else if (osName == "linux") {
+                    targetOS = TargetOS::Linux;
+                } else {
+                    std::cerr << "Error: unsupported target OS: " << osName << " (must be 'macos' or 'linux')\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --os requires an argument\n";
+                return 1;
+            }
         } else if (arg != "-" && !arg.empty() && arg[0] == '-') {
             std::cerr << "Unknown option: " << arg << "\n";
             printUsage(argv[0]);
@@ -65,9 +124,23 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Default to --ir if no specific mode selected
-    if (!modeLex && !modeAst && !modeCheck && !modeIR && !modeRun) {
-        modeIR = true;
+    std::string baseName = filename;
+    if (baseName != "-" && baseName.rfind('.') != std::string::npos) {
+        baseName = baseName.substr(0, baseName.rfind('.'));
+    }
+
+    if (modeAsm) {
+        if (outputFile.empty()) {
+            outputFile = (filename == "-") ? "-" : (baseName + ".s");
+        }
+    } else if (modeObj) {
+        if (outputFile.empty()) {
+            outputFile = (filename == "-") ? "a.o" : (baseName + ".o");
+        }
+    } else if (!modeLex && !modeAst && !modeCheck && !modeIR && !modeRun) {
+        if (outputFile.empty()) {
+            outputFile = "a.out";
+        }
     }
 
     std::string source;
@@ -148,6 +221,66 @@ int main(int argc, char* argv[]) {
             std::cerr << "Runtime error: " << e.what() << "\n";
             return 1;
         }
+    }
+
+    // Backend Code Generation
+    auto codegen = createCodeGenerator(targetArch, targetOS);
+    std::ostringstream asmStream;
+    codegen->generate(*irModule, asmStream);
+    std::string assembly = asmStream.str();
+
+    // Mode -S: Emit assembly file
+    if (modeAsm) {
+        if (outputFile == "-") {
+            std::cout << assembly;
+        } else {
+            std::ofstream out(outputFile);
+            if (!out.is_open()) {
+                std::cerr << "Error: cannot open output file '" << outputFile << "' for writing.\n";
+                return 1;
+            }
+            out << assembly;
+            std::cout << "Assembly written to " << outputFile << "\n";
+        }
+        return 0;
+    }
+
+    // Assemble / Link using system assembler and linker (clang driver)
+    char tempAsmTemplate[] = "/tmp/c_compiler_XXXXXX.s";
+    int fd = mkstemps(tempAsmTemplate, 2);
+    if (fd == -1) {
+        std::cerr << "Error: failed to create temporary assembly file.\n";
+        return 1;
+    }
+    write(fd, assembly.c_str(), assembly.size());
+    close(fd);
+
+    std::string archFlag;
+    if (targetOS == TargetOS::macOS) {
+        archFlag = (targetArch == TargetArch::ARM64) ? "-arch arm64" : "-arch x86_64";
+    } else {
+        archFlag = (targetArch == TargetArch::ARM64) ? "--target=aarch64-linux-gnu" : "--target=x86_64-linux-gnu";
+    }
+
+    std::string cmd;
+    if (modeObj) {
+        cmd = "clang " + archFlag + " -c \"" + tempAsmTemplate + "\" -o \"" + outputFile + "\"";
+    } else {
+        cmd = "clang " + archFlag + " \"" + tempAsmTemplate + "\" -o \"" + outputFile + "\"";
+    }
+
+    int res = std::system(cmd.c_str());
+    unlink(tempAsmTemplate);
+
+    if (res != 0) {
+        std::cerr << "Error: system assembler/linker failed.\n";
+        return 1;
+    }
+
+    if (modeObj) {
+        std::cout << "Object file written to " << outputFile << "\n";
+    } else {
+        std::cout << "Executable binary written to " << outputFile << "\n";
     }
 
     return 0;

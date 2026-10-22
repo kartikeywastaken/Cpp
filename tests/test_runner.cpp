@@ -16,6 +16,7 @@ void runLexerTests();
 void runParserTests();
 void runSemanticTests();
 void runIRTests();
+void runCodeGenTests();
 
 static bool runSampleTest(const std::string& path, int64_t expectedExitCode) {
     std::ifstream file(path);
@@ -77,6 +78,9 @@ int main() {
     std::cout << "\n";
 
     runIRTests();
+    std::cout << "\n";
+
+    runCodeGenTests();
     std::cout << "\n";
 
     std::cout << "[RUNNING] End-to-End Sample Program Tests...\n";
